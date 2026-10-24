@@ -1,6 +1,7 @@
 {
   "name": "tropa-do-rodo-2-bot",
-  "version": "1.0.0",
+  "version": "1.2.0",
+  "description": "Bot Discord Tropa do Rodo 2 - Nova Rio RP",
   "main": "index.js",
   "scripts": {
     "start": "node index.js"
