@@ -36,7 +36,8 @@ let db = load();
 const save = () => fs.writeFileSync(file, JSON.stringify(db, null, 2));
 
 const commands = [
-  new SlashCommandBuilder().setName('recrutamento').setDescription('Publica o painel oficial de recrutamento'),
+  new SlashCommandBuilder().setName('recrutamento').setDescription('Publica o painel e define o canal de logs das fichas')
+    .addChannelOption(option => option.setName('canal_log').setDescription('Canal onde todas as fichas serão enviadas').addChannelTypes(ChannelType.GuildText).setRequired(true)),
   new SlashCommandBuilder().setName('farme').setDescription('Publica o painel de registro de farm'),
   new SlashCommandBuilder().setName('bau').setDescription('Publica o painel de movimentações do baú'),
   new SlashCommandBuilder().setName('configuracao').setDescription('Personaliza banners e canal de recrutamento')
@@ -100,52 +101,50 @@ function embed(title, description, key, color = RED) {
   return e;
 }
 
-function formModal(userId, page) {
+function formModal(userId) {
   const modal = new ModalBuilder()
-    .setCustomId(`form_${userId}_${page}`)
-    .setTitle(`Ficha de recrutamento • Parte ${page + 1}/6`);
-  const fields = questions.slice(page * 5, page * 5 + 5);
-  modal.addComponents(...fields.map((q, ix) => {
-    const index = page * 5 + ix;
-    const input = new TextInputBuilder().setCustomId(`q${index}`)
-      .setLabel(q[0].slice(0, 45))
-      .setStyle(index >= 5 ? TextInputStyle.Paragraph : TextInputStyle.Short)
-      .setRequired(true).setMaxLength(1000);
+    .setCustomId(`form_${userId}`)
+    .setTitle('Ficha de recrutamento • etapa única');
+
+  const groups = [
+    { label: 'Perguntas 01 a 06 • dados pessoais', start: 0, end: 6 },
+    { label: 'Perguntas 07 a 12 • conhecimento RP', start: 6, end: 12 },
+    { label: 'Perguntas 13 a 18 • conduta e interesse', start: 12, end: 18 },
+    { label: 'Perguntas 19 a 24 • compromisso', start: 18, end: 24 },
+    { label: 'Perguntas 25 a 30 • equipe e objetivo', start: 24, end: 30 },
+  ];
+
+  modal.addComponents(...groups.map((group, idx) => {
+    const prompts = questions.slice(group.start, group.end)
+      .map((q, n) => `${group.start + n + 1}. ${q[1]}`).join('\n');
+    const input = new TextInputBuilder()
+      .setCustomId(`group${idx}`)
+      .setLabel(group.label)
+      .setPlaceholder(prompts.slice(0, 100))
+      .setStyle(TextInputStyle.Paragraph)
+      .setRequired(true)
+      .setMaxLength(1000);
     return new ActionRowBuilder().addComponents(input);
   }));
   return modal;
 }
 
-async function getReviewChannel(guild) {
+async function getReviewChannel(guild, channelId) {
   if (!guild) throw new Error('A interação não veio de um servidor Discord.');
-
-  if (db.reviewChannelId) {
-    const existing = await guild.channels.fetch(db.reviewChannelId).catch(() => null);
-    if (existing && existing.type === ChannelType.GuildText) return existing;
+  const channel = await guild.channels.fetch(channelId).catch(() => null);
+  if (!channel || channel.type !== ChannelType.GuildText) {
+    throw new Error('O canal de log selecionado não existe ou não é um canal de texto.');
   }
-
-  const channel = await guild.channels.create({
-    name: '🔒・log-recrutamento',
-    type: ChannelType.GuildText,
-    topic: 'Canal privado para análise das fichas da Tropa do Rodo 2. Conceda acesso apenas à liderança.',
-    permissionOverwrites: [
-      {
-        id: guild.roles.everyone.id,
-        deny: [PermissionsBitField.Flags.ViewChannel],
-      },
-      {
-        id: client.user.id,
-        allow: [
-          PermissionsBitField.Flags.ViewChannel,
-          PermissionsBitField.Flags.SendMessages,
-          PermissionsBitField.Flags.EmbedLinks,
-          PermissionsBitField.Flags.ReadMessageHistory,
-          PermissionsBitField.Flags.SendMessagesInThreads,
-        ],
-      },
-    ],
-  });
-
+  const me = guild.members.me || await guild.members.fetch(client.user.id);
+  const permissions = channel.permissionsFor(me);
+  if (!permissions?.has([
+    PermissionFlagsBits.ViewChannel,
+    PermissionFlagsBits.SendMessages,
+    PermissionFlagsBits.EmbedLinks,
+    PermissionFlagsBits.ReadMessageHistory,
+  ])) {
+    throw new Error(`O bot não tem permissões necessárias no canal de log ${channel.id}.`);
+  }
   db.reviewChannelId = channel.id;
   save();
   return channel;
@@ -157,19 +156,19 @@ function formatAnswerEmbeds(recruit) {
     `**Candidato:** <@${recruit.user}>\n**Status:** 🟡 EM ANÁLISE\n**Enviada em:** ${recruit.createdAt}\n\n🔒 Esta ficha é para uso exclusivo da liderança.`,
     'recrutamento'
   );
-  const fields = recruit.answers.map((answer, n) => ({
-    name: questions[n][0],
+  const fields = (recruit.groupedAnswers || []).map((answer, n) => ({
+    name: [
+      '01–06 • Dados pessoais',
+      '07–12 • Conhecimento RP',
+      '13–18 • Conduta e interesse',
+      '19–24 • Compromisso',
+      '25–30 • Equipe e objetivo',
+    ][n] || `Bloco ${n + 1}`,
     value: String(answer || '—').slice(0, 1024),
     inline: false,
   }));
-  const e1 = EmbedBuilder.from(intro).addFields(fields.slice(0, 25));
-  const e2 = embed(
-    '📋 FICHA DE RECRUTAMENTO • CONTINUAÇÃO',
-    `**Candidato:** <@${recruit.user}>\n**Personagem:** ${String(recruit.answers[0] || '—').slice(0, 200)}\n**Status:** 🟡 EM ANÁLISE`,
-    'recrutamento'
-  );
-  if (fields.length > 25) e2.addFields(fields.slice(25));
-  return [e1, e2];
+  const e1 = EmbedBuilder.from(intro).addFields(fields.slice(0, 5));
+  return [e1];
 }
 
 function reviewButtons(id) {
@@ -206,12 +205,13 @@ client.on('interactionCreate', async i => {
       }
 
       if (i.commandName === 'recrutamento') {
-        const reviewChannel = await getReviewChannel(i.guild);
-        console.log(`[RECRUTAMENTO] Canal privado configurado: ${reviewChannel.id}`);
+        const selectedLogChannel = i.options.getChannel('canal_log', true);
+        const reviewChannel = await getReviewChannel(i.guild, selectedLogChannel.id);
+        console.log(`[RECRUTAMENTO] Canal de logs configurado: ${reviewChannel.id}`);
         return i.reply({
           embeds: [embed(
             '☠️ RECRUTAMENTO OFICIAL • TROPA DO RODO 2',
-            '🏴 **NOVA RIO RP**\n\n📋 Clique no botão para preencher sua ficha completa de 30 perguntas.\n\n🔒 **Importante:**\n• Você só pode enviar uma ficha.\n• Depois de enviar, aguarde a decisão da liderança.\n• Se for aprovado, será orientado a participar de uma entrevista por call.\n• A ficha enviada fica no canal privado de análise da liderança.\n\n🟥 **Respeito • Lealdade • Compromisso**',
+            '🏴 **NOVA RIO RP**\n\n📋 Clique no botão para preencher a ficha completa de 30 perguntas em uma única etapa.\n\n🔒 **Importante:**\n• Se sua ficha anterior foi recusada, você poderá se inscrever novamente.\n• Depois de enviar, aguarde a decisão da liderança.\n• Se for aprovado, será orientado a participar de uma entrevista por call.\n• Todas as fichas serão enviadas para <#{reviewChannel.id}>.\n\n🟥 **Respeito • Lealdade • Compromisso**',
             'recrutamento'
           )],
           components: [row(btn('apply', 'Iniciar ficha de inscrição', ButtonStyle.Danger, '📝'))],
@@ -252,7 +252,7 @@ client.on('interactionCreate', async i => {
           ephemeral: true,
           embeds: [embed(
             '⚙️ PERSONALIZAÇÃO DOS PAINÉIS',
-            'Escolha qual banner deseja alterar. Use um link HTTPS direto de imagem PNG, JPG, GIF ou WEBP.\n\n🔒 O canal de análise de recrutamento é criado automaticamente e fica privado por padrão. Para dar acesso à liderança, abra as permissões desse canal e adicione os cargos de líderes.',
+            'Escolha qual banner deseja alterar. Use um link HTTPS direto de imagem PNG, JPG, GIF ou WEBP.\n\n🔒 Ao usar /recrutamento, selecione o canal de texto que receberá todas as fichas. Dê ao bot as permissões Ver canal, Enviar mensagens, Inserir links e Ler histórico de mensagens; dê acesso à liderança nas permissões do canal.',
             null,
             DARK
           )],
@@ -276,29 +276,12 @@ client.on('interactionCreate', async i => {
       }
 
       if (id === 'apply') {
-        const prior = db.recruits.find(r => r.user === i.user.id);
+        const prior = db.recruits.find(r => r.user === i.user.id && r.status === 'Pendente');
         if (prior) {
-          const status = prior.status === 'Pendente'
-            ? '🟡 Sua ficha está em análise. Aguarde o resultado.'
-            : prior.status === 'Aprovado'
-              ? '✅ Sua ficha foi aprovada. Aguarde as instruções para a entrevista por call.'
-              : '❌ Sua ficha foi recusada. Você não pode enviar outra ficha por este painel.';
-          return i.reply({ content: status, ephemeral: true });
+          return i.reply({ content: '🟡 Você já tem uma ficha em análise. Aguarde a decisão da liderança antes de enviar outra.', ephemeral: true });
         }
-        client.pendingForms.set(i.user.id, { answers: Array(30).fill(null), startedAt: new Date().toLocaleString('pt-BR') });
-        return i.showModal(formModal(i.user.id, 0));
-      }
-
-      if (id.startsWith('next_')) {
-        const [, userId, pageStr] = id.split('_');
-        const page = Number(pageStr);
-        if (i.user.id !== userId) return i.reply({ content: 'Esta ficha pertence a outra pessoa.', ephemeral: true });
-        const draft = client.pendingForms.get(userId);
-        if (!draft) return i.reply({ content: 'A ficha expirou. Inicie novamente.', ephemeral: true });
-        if (!Number.isInteger(page) || page < 0 || page > 5) {
-          return i.reply({ content: 'Etapa inválida. Inicie novamente.', ephemeral: true });
-        }
-        return i.showModal(formModal(userId, page));
+        client.pendingForms.set(i.user.id, { startedAt: new Date().toLocaleString('pt-BR') });
+        return i.showModal(formModal(i.user.id));
       }
 
       if (id === 'farmadd') {
@@ -367,45 +350,47 @@ client.on('interactionCreate', async i => {
       const id = i.customId;
 
       if (id.startsWith('form_')) {
-        const parts = id.split('_');
-        const userId = parts[1], page = Number(parts[2]);
+        const userId = id.slice('form_'.length);
         if (i.user.id !== userId) return i.reply({ content: 'Esta ficha pertence a outra pessoa.', ephemeral: true });
-        const prior = db.recruits.find(r => r.user === i.user.id);
-        if (prior) return i.reply({ content: 'Você já enviou uma ficha. Aguarde o resultado da liderança.', ephemeral: true });
+
+        const prior = db.recruits.find(r => r.user === i.user.id && r.status === 'Pendente');
+        if (prior) {
+          client.pendingForms.delete(userId);
+          return i.reply({ content: '🟡 Você já tem uma ficha em análise. Aguarde a decisão da liderança.', ephemeral: true });
+        }
 
         const draft = client.pendingForms.get(userId);
         if (!draft) return i.reply({ content: 'Sua ficha expirou. Clique em Iniciar ficha de inscrição para começar novamente.', ephemeral: true });
-        if (!Number.isInteger(page) || page < 0 || page > 5) {
-          return i.reply({ content: 'Etapa inválida. Inicie novamente.', ephemeral: true });
-        }
 
-        for (let n = 0; n < 5; n++) {
-          draft.answers[page * 5 + n] = i.fields.getTextInputValue(`q${page * 5 + n}`);
-        }
-        client.pendingForms.set(userId, draft);
-
-        if (page < 5) {
-          return i.reply({
-            content: `✅ Parte ${page + 1}/6 salva. Continue para a próxima parte da ficha.`,
-            components: [row(btn(`next_${userId}_${page + 1}`, `Continuar • Parte ${page + 2}/6`, ButtonStyle.Danger, '➡️'))],
-            ephemeral: true,
-          });
+        const groupedAnswers = [0, 1, 2, 3, 4].map(n => i.fields.getTextInputValue(`group${n}`).trim());
+        const answers = [];
+        for (let groupIndex = 0; groupIndex < groupedAnswers.length; groupIndex++) {
+          const text = groupedAnswers[groupIndex];
+          const expectedStart = groupIndex * 6;
+          const lines = text.split(/\n+/).map(line => line.trim()).filter(Boolean);
+          // Keep the candidate's original numbered responses together in a readable answer.
+          for (let j = 0; j < 6; j++) {
+            const qIndex = expectedStart + j;
+            const matching = lines.find(line => new RegExp(`^\\s*${qIndex + 1}[.)\\-:]\\s*`).test(line));
+            answers[qIndex] = (matching || (j === 0 ? text : 'Resposta incluída no bloco acima')).slice(0, 1000);
+          }
         }
 
         const recruit = {
           id: `${Date.now()}-${userId}`,
           user: userId,
-          answers: draft.answers,
+          answers,
+          groupedAnswers,
           status: 'Pendente',
           createdAt: new Date().toLocaleString('pt-BR'),
         };
 
-        // Envie primeiro para o canal privado. Só depois confirme ao candidato.
         let reviewChannel;
         let reviewMessage;
         try {
           const guild = await client.guilds.fetch(G);
-          reviewChannel = await getReviewChannel(guild);
+          if (!db.reviewChannelId) throw new Error('Nenhum canal de logs configurado. Um administrador deve executar /recrutamento e escolher canal_log.');
+          reviewChannel = await getReviewChannel(guild, db.reviewChannelId);
           const [e1, e2] = formatAnswerEmbeds(recruit);
           reviewMessage = await reviewChannel.send({
             content: `📥 Nova ficha para análise — candidato: <@${recruit.user}>`,
@@ -413,14 +398,14 @@ client.on('interactionCreate', async i => {
             components: [reviewButtons(recruit.id)],
           });
         } catch (sendError) {
-          console.error('[RECRUTAMENTO] Não foi possível enviar a ficha ao canal privado.', {
+          console.error('[RECRUTAMENTO] Não foi possível enviar a ficha ao canal de logs.', {
             message: sendError?.message,
             code: sendError?.code,
             channelId: reviewChannel?.id || db.reviewChannelId,
             userId,
           });
           return i.reply({
-            content: '❌ Não consegui publicar sua ficha no canal privado da liderança. Sua inscrição não foi confirmada. Avise um administrador para verificar as permissões do bot.',
+            content: '❌ Não consegui enviar sua ficha ao canal de logs. Sua inscrição não foi confirmada. Avise um administrador para verificar o canal selecionado e as permissões do bot.',
             ephemeral: true,
           });
         }
@@ -434,7 +419,7 @@ client.on('interactionCreate', async i => {
         return i.reply({
           embeds: [embed(
             '✅ FICHA ENVIADA COM SUCESSO',
-            'Sua ficha foi enviada à liderança e está **EM ANÁLISE**.\n\n⏳ Aguarde o resultado. Não é possível enviar outra ficha.\n\nSe for aprovado, você receberá uma mensagem com as instruções para a entrevista por call.',
+            'Sua ficha foi enviada à liderança e está **EM ANÁLISE**. Aguarde o resultado.\n\nSe sua ficha for recusada, você poderá preencher uma nova ficha pelo painel.',
             null,
             0x2D8A55
           )],
