@@ -1,19 +1,30 @@
 const {
   Client, GatewayIntentBits, REST, Routes, SlashCommandBuilder,
   ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder, ModalBuilder,
-  TextInputBuilder, TextInputStyle, PermissionFlagsBits, ChannelType, PermissionsBitField
+  TextInputBuilder, TextInputStyle, PermissionFlagsBits, ChannelType
 } = require('discord.js');
+
 const fs = require('node:fs');
 const path = require('node:path');
 
 const { DISCORD_TOKEN: T, CLIENT_ID: C, GUILD_ID: G } = process.env;
+const REVIEW_CHANNEL_ID = '1563709838142349342';
+
 if (!T || !C || !G) {
-  console.error('Configure DISCORD_TOKEN, CLIENT_ID e GUILD_ID nas variáveis de ambiente.');
+  console.error('Configure DISCORD_TOKEN, CLIENT_ID e GUILD_ID.');
   process.exit(1);
 }
 
 const file = path.join(__dirname, 'data.json');
-const fresh = () => ({ banners: {}, recruits: [], farm: {}, farmRecords: [], chest: [], reviewChannelId: null });
+
+const fresh = () => ({
+  banners: {},
+  recruits: [],
+  farm: {},
+  farmRecords: [],
+  chest: [],
+  reviewChannelId: null
+});
 
 function load() {
   try {
@@ -25,7 +36,7 @@ function load() {
       recruits: Array.isArray(old.recruits) ? old.recruits : [],
       farm: old.farm && typeof old.farm === 'object' ? old.farm : {},
       farmRecords: Array.isArray(old.farmRecords) ? old.farmRecords : [],
-      chest: Array.isArray(old.chest) ? old.chest : [],
+      chest: Array.isArray(old.chest) ? old.chest : []
     };
   } catch {
     return fresh();
@@ -33,24 +44,39 @@ function load() {
 }
 
 let db = load();
-const save = () => fs.writeFileSync(file, JSON.stringify(db, null, 2));
+const save = () =>
+  fs.writeFileSync(file, JSON.stringify(db, null, 2));
 
 const commands = [
-  new SlashCommandBuilder().setName('recrutamento').setDescription('Publica o painel e define o canal de logs das fichas')
-    .addChannelOption(option => option.setName('canal_log').setDescription('Canal onde todas as fichas serão enviadas').addChannelTypes(ChannelType.GuildText).setRequired(true)),
-  new SlashCommandBuilder().setName('farme').setDescription('Publica o painel de registro de farm'),
-  new SlashCommandBuilder().setName('bau').setDescription('Publica o painel de movimentações do baú'),
-  new SlashCommandBuilder().setName('configuracao').setDescription('Personaliza banners e canal de recrutamento')
+  new SlashCommandBuilder()
+    .setName('recrutamento')
+    .setDescription('Publica o painel de recrutamento'),
+
+  new SlashCommandBuilder()
+    .setName('farme')
+    .setDescription('Publica o painel de registro de farm'),
+
+  new SlashCommandBuilder()
+    .setName('bau')
+    .setDescription('Publica o painel de movimentações do baú'),
+
+  new SlashCommandBuilder()
+    .setName('configuracao')
+    .setDescription('Personaliza banners e configurações')
 ].map(x => x.toJSON());
 
-const client = new Client({ intents: [GatewayIntentBits.Guilds] });
+const client = new Client({
+  intents: [GatewayIntentBits.Guilds]
+});
+
 client.pendingForms = new Map();
 
 const admin = i => Boolean(
   i.memberPermissions?.has(PermissionFlagsBits.Administrator) ||
   i.memberPermissions?.has(PermissionFlagsBits.ManageGuild)
 );
-const RED = 0xC1121F, DARK = 0x191919;
+
+const RED = 0xC1121F;
 
 const questions = [
   ['01. Nome do personagem (IC)', 'Nome do personagem (IC)'],
@@ -86,416 +112,720 @@ const questions = [
 ];
 
 const btn = (id, label, style = ButtonStyle.Danger, emoji) => {
-  const b = new ButtonBuilder().setCustomId(id).setLabel(label).setStyle(style);
+  const b = new ButtonBuilder()
+    .setCustomId(id)
+    .setLabel(label)
+    .setStyle(style);
+
   if (emoji) b.setEmoji(emoji);
   return b;
 };
-const row = (...items) => new ActionRowBuilder().addComponents(...items);
+
+const row = (...items) =>
+  new ActionRowBuilder().addComponents(...items);
 
 function embed(title, description, key, color = RED) {
-  const e = new EmbedBuilder().setColor(color)
+  const e = new EmbedBuilder()
+    .setColor(color)
     .setAuthor({ name: '👑 TROPA DO RODO 2 • NOVA RIO RP' })
-    .setTitle(title).setDescription(description)
-    .setFooter({ text: 'NOVA RIO RP • RESPEITO • LEALDADE • COMPROMISSO' }).setTimestamp();
+    .setTitle(title)
+    .setDescription(description)
+    .setFooter({
+      text: 'NOVA RIO RP • RESPEITO • LEALDADE • COMPROMISSO'
+    })
+    .setTimestamp();
+
   if (key && db.banners[key]) e.setImage(db.banners[key]);
   return e;
-}
+  }
+async function getReviewChannel(guild) {
+  const channel = await guild.channels.fetch(REVIEW_CHANNEL_ID);
 
-function formModal(userId) {
-  const modal = new ModalBuilder()
-    .setCustomId(`form_${userId}`)
-    .setTitle('Ficha de recrutamento • etapa única');
-
-  const groups = [
-    { label: 'Perguntas 01 a 06 • dados pessoais', start: 0, end: 6 },
-    { label: 'Perguntas 07 a 12 • conhecimento RP', start: 6, end: 12 },
-    { label: 'Perguntas 13 a 18 • conduta e interesse', start: 12, end: 18 },
-    { label: 'Perguntas 19 a 24 • compromisso', start: 18, end: 24 },
-    { label: 'Perguntas 25 a 30 • equipe e objetivo', start: 24, end: 30 },
-  ];
-
-  modal.addComponents(...groups.map((group, idx) => {
-    const prompts = questions.slice(group.start, group.end)
-      .map((q, n) => `${group.start + n + 1}. ${q[1]}`).join('\n');
-    const input = new TextInputBuilder()
-      .setCustomId(`group${idx}`)
-      .setLabel(group.label)
-      .setPlaceholder(prompts.slice(0, 100))
-      .setStyle(TextInputStyle.Paragraph)
-      .setRequired(true)
-      .setMaxLength(1000);
-    return new ActionRowBuilder().addComponents(input);
-  }));
-  return modal;
-}
-
-async function getReviewChannel(guild, channelId) {
-  if (!guild) throw new Error('A interação não veio de um servidor Discord.');
-  const channel = await guild.channels.fetch(channelId).catch(() => null);
   if (!channel || channel.type !== ChannelType.GuildText) {
-    throw new Error('O canal de log selecionado não existe ou não é um canal de texto.');
+    throw new Error(
+      `O canal privado ${REVIEW_CHANNEL_ID} não foi encontrado.`
+    );
   }
-  const me = guild.members.me || await guild.members.fetch(client.user.id);
+
+  const me = guild.members.me ||
+    await guild.members.fetch(client.user.id);
+
   const permissions = channel.permissionsFor(me);
-  if (!permissions?.has([
-    PermissionFlagsBits.ViewChannel,
-    PermissionFlagsBits.SendMessages,
-    PermissionFlagsBits.EmbedLinks,
-    PermissionFlagsBits.ReadMessageHistory,
-  ])) {
-    throw new Error(`O bot não tem permissões necessárias no canal de log ${channel.id}.`);
+
+  if (
+    !permissions?.has(PermissionFlagsBits.ViewChannel) ||
+    !permissions?.has(PermissionFlagsBits.SendMessages) ||
+    !permissions?.has(PermissionFlagsBits.EmbedLinks)
+  ) {
+    throw new Error(
+      'O bot precisa de Ver Canal, Enviar Mensagens e Incorporar Links no canal de recrutamento.'
+    );
   }
-  db.reviewChannelId = channel.id;
-  save();
+
   return channel;
 }
 
-function formatAnswerEmbeds(recruit) {
-  const intro = embed(
-    '📋 FICHA RECEBIDA • EM ANÁLISE',
-    `**Candidato:** <@${recruit.user}>\n**Status:** 🟡 EM ANÁLISE\n**Enviada em:** ${recruit.createdAt}\n\n🔒 Esta ficha é para uso exclusivo da liderança.`,
-    'recrutamento'
+function createRecruitmentPanel(channelId) {
+  return embed(
+    '📋 RECRUTAMENTO OFICIAL',
+    [
+      'Faça sua inscrição para a **Tropa do Rodo 2**.',
+      '',
+      '📝 Clique no botão abaixo e responda ao formulário.',
+      '🔒 Sua ficha será enviada para o canal privado da liderança.',
+      `📨 Canal de análise: <#${channelId}>`,
+      '',
+      '⚠️ Responda com sinceridade e respeite as regras da Nova Rio RP.'
+    ].join('\n'),
+    'recruitment'
   );
-  const fields = (recruit.groupedAnswers || []).map((answer, n) => ({
-    name: [
-      '01–06 • Dados pessoais',
-      '07–12 • Conhecimento RP',
-      '13–18 • Conduta e interesse',
-      '19–24 • Compromisso',
-      '25–30 • Equipe e objetivo',
-    ][n] || `Bloco ${n + 1}`,
-    value: String(answer || '—').slice(0, 1024),
-    inline: false,
-  }));
-  const e1 = EmbedBuilder.from(intro).addFields(fields.slice(0, 5));
-  return [e1];
 }
 
-function reviewButtons(id) {
+function createFarmPanel() {
+  return embed(
+    '💰 REGISTRO DE FARM',
+    [
+      'Utilize os botões abaixo para registrar seu farm.',
+      '',
+      '📥 **Registrar entrada:** informe o valor arrecadado.',
+      '📊 **Consultar registros:** veja os registros disponíveis.'
+    ].join('\n'),
+    'farm'
+  );
+}
+
+function createChestPanel() {
+  return embed(
+    '📦 CONTROLE DO BAÚ',
+    [
+      'Registre as movimentações do baú da facção.',
+      '',
+      '📥 **Entrada:** registrar item ou dinheiro recebido.',
+      '📤 **Saída:** registrar item ou dinheiro retirado.',
+      '',
+      '⚠️ Informe os dados corretamente.'
+    ].join('\n'),
+    'chest'
+  );
+}
+
+function createRecruitmentButtons() {
   return row(
-    btn(`approve_${id}`, 'Aprovar', ButtonStyle.Success, '✅'),
-    btn(`reject_${id}`, 'Recusar', ButtonStyle.Danger, '❌')
+    btn('recruit_apply', 'Preencher ficha', ButtonStyle.Success, '📝')
   );
 }
 
-async function replyError(i, error, context) {
-  console.error(`[${context}]`, error);
-  const content = '❌ Não consegui concluir essa ação. Verifique as permissões do bot e os logs da hospedagem.';
-  try {
-    if (!i.isRepliable()) return;
-    if (i.deferred) {
-      await i.editReply({ content, embeds: [], components: [] });
-    } else if (i.replied) {
-      await i.followUp({ content, ephemeral: true });
-    } else {
-      await i.reply({ content, ephemeral: true });
-    }
-  } catch (replyError) {
-    console.error(`[${context}] Também não foi possível responder à interação:`, replyError);
-  }
+function createFarmButtons() {
+  return row(
+    btn('farm_add', 'Registrar farm', ButtonStyle.Success, '💰'),
+    btn('farm_view', 'Consultar farm', ButtonStyle.Secondary, '📊')
+  );
 }
 
-client.once('ready', () => console.log(`Bot online: ${client.user.tag}`));
+function createChestButtons() {
+  return row(
+    btn('chest_in', 'Entrada', ButtonStyle.Success, '📥'),
+    btn('chest_out', 'Saída', ButtonStyle.Danger, '📤'),
+    btn('chest_view', 'Consultar', ButtonStyle.Secondary, '📋')
+  );
+}
 
-client.on('interactionCreate', async i => {
+function createReviewButtons(recruitId) {
+  return row(
+    btn(`recruit_approve_${recruitId}`, 'Aprovar', ButtonStyle.Success, '✅'),
+    btn(`recruit_reject_${recruitId}`, 'Recusar', ButtonStyle.Danger, '❌')
+  );
+}
+
+function makeRecruitmentModal() {
+  const modal = new ModalBuilder()
+    .setCustomId('recruitment_form')
+    .setTitle('Ficha de recrutamento');
+
+  for (let i = 0; i < 5; i++) {
+    const [label, placeholder] = questions[i];
+
+    modal.addComponents(
+      new ActionRowBuilder().addComponents(
+        new TextInputBuilder()
+          .setCustomId(`answer_${i}`)
+          .setLabel(label.slice(0, 45))
+          .setPlaceholder(placeholder.slice(0, 100))
+          .setStyle(TextInputStyle.Short)
+          .setRequired(true)
+          .setMaxLength(100)
+      )
+    );
+  }
+
+  return modal;
+}
+
+function makeExtraQuestionModal(startIndex) {
+  const modal = new ModalBuilder()
+    .setCustomId(`recruitment_extra_${startIndex}`)
+    .setTitle(`Ficha • Perguntas ${startIndex + 1}–${Math.min(startIndex + 5, questions.length)}`);
+
+  for (let i = startIndex; i < Math.min(startIndex + 5, questions.length); i++) {
+    const [label, placeholder] = questions[i];
+
+    modal.addComponents(
+      new ActionRowBuilder().addComponents(
+        new TextInputBuilder()
+          .setCustomId(`answer_${i}`)
+          .setLabel(label.slice(0, 45))
+          .setPlaceholder(placeholder.slice(0, 100))
+          .setStyle(TextInputStyle.Paragraph)
+          .setRequired(true)
+          .setMaxLength(1000)
+      )
+    );
+  }
+
+  return modal;
+}
+
+function makeFarmModal() {
+  const modal = new ModalBuilder()
+    .setCustomId('farm_modal')
+    .setTitle('Registro de farm');
+
+  modal.addComponents(
+    new ActionRowBuilder().addComponents(
+      new TextInputBuilder()
+        .setCustomId('farm_amount')
+        .setLabel('Valor arrecadado')
+        .setPlaceholder('Ex.: 5000')
+        .setStyle(TextInputStyle.Short)
+        .setRequired(true)
+        .setMaxLength(20)
+    )
+  );
+
+  return modal;
+}
+
+function makeChestModal(direction) {
+  const modal = new ModalBuilder()
+    .setCustomId(`chest_modal_${direction}`)
+    .setTitle(direction === 'in' ? 'Entrada no baú' : 'Saída do baú');
+
+  modal.addComponents(
+    new ActionRowBuilder().addComponents(
+      new TextInputBuilder()
+        .setCustomId('chest_item')
+        .setLabel('Item ou dinheiro')
+        .setPlaceholder('Informe o item e a quantidade')
+        .setStyle(TextInputStyle.Short)
+        .setRequired(true)
+        .setMaxLength(100)
+    ),
+    new ActionRowBuilder().addComponents(
+      new TextInputBuilder()
+        .setCustomId('chest_reason')
+        .setLabel('Motivo da movimentação')
+        .setPlaceholder('Explique o motivo')
+        .setStyle(TextInputStyle.Paragraph)
+        .setRequired(true)
+        .setMaxLength(500)
+    )
+  );
+
+  return modal;
+}
+
+function formatAnswerEmbeds(recruit) {
+  const e = embed(
+    `📋 Ficha de ${recruit.username}`,
+    [
+      `**Candidato:** <@${recruit.userId}>`,
+      `**ID da ficha:** \`${recruit.id}\``,
+      `**Status:** ${recruit.status}`,
+      '',
+      ...recruit.answers.map(
+        (answer, index) =>
+          `**${questions[index][0]}**\n${answer || 'Não informado'}`
+      )
+    ].join('\n\n'),
+    'recruitment'
+  );
+
+  return [e];
+}
+
+function findRecruit(id) {
+  return db.recruits.find(r => r.id === id);
+}
+
+function createRecruitId() {
+  return `${Date.now().toString(36)}${Math.random()
+    .toString(36)
+    .slice(2, 7)}`;
+}
+
+async function publishPanel(interaction, panel, components) {
+  await interaction.channel.send({
+    embeds: [panel],
+    components
+  });
+
+  await interaction.reply({
+    content: '✅ Painel publicado com sucesso!',
+    ephemeral: true
+  });
+}
+
+async function registerCommands() {
+  const rest = new REST({ version: '10' }).setToken(T);
+
+  await rest.put(
+    Routes.applicationGuildCommands(C, G),
+    { body: commands }
+  );
+
+  console.log('Comandos registrados na guild configurada.');
+}
+
+client.once('ready', async () => {
+  console.log(`Bot conectado como ${client.user.tag}`);
+
   try {
-    if (i.isChatInputCommand()) {
-      if (!admin(i)) {
-        return i.reply({ content: '🔒 Apenas a administração pode publicar ou configurar painéis.', ephemeral: true });
-      }
-
-      if (i.commandName === 'recrutamento') {
-        const selectedLogChannel = i.options.getChannel('canal_log', true);
-        const reviewChannel = await getReviewChannel(i.guild, selectedLogChannel.id);
-        console.log(`[RECRUTAMENTO] Canal de logs configurado: ${reviewChannel.id}`);
-        return i.reply({
-          embeds: [embed(
-            '☠️ RECRUTAMENTO OFICIAL • TROPA DO RODO 2',
-            '🏴 **NOVA RIO RP**\n\n📋 Clique no botão para preencher a ficha completa de 30 perguntas em uma única etapa.\n\n🔒 **Importante:**\n• Se sua ficha anterior foi recusada, você poderá se inscrever novamente.\n• Depois de enviar, aguarde a decisão da liderança.\n• Se for aprovado, será orientado a participar de uma entrevista por call.\n• Todas as fichas serão enviadas para <#{reviewChannel.id}>.\n\n🟥 **Respeito • Lealdade • Compromisso**',
-            'recrutamento'
-          )],
-          components: [row(btn('apply', 'Iniciar ficha de inscrição', ButtonStyle.Danger, '📝'))],
-          ephemeral: false,
+    await registerCommands();
+  } catch (error) {
+    console.error('Erro ao registrar comandos:', error);
+  }
+});
+client.on('interactionCreate', async interaction => {
+  try {
+    if (interaction.isChatInputCommand()) {
+      if (!interaction.inGuild()) {
+        return interaction.reply({
+          content: 'Este comando só pode ser usado em um servidor.',
+          ephemeral: true
         });
       }
 
-      if (i.commandName === 'farme') {
-        return i.reply({
-          embeds: [embed(
-            '💰 REGISTRO DE FARM',
-            'Registre suas quantidades e consulte o histórico de registros.\n\n📥 **Registrar farm** — adicionar uma quantidade ao seu histórico.\n📜 **Ver registros** — consultar os registros recentes.',
-            'farme'
-          )],
-          components: [row(
-            btn('farmadd', 'Registrar farm', ButtonStyle.Success, '💵'),
-            btn('farmrecords', 'Ver registros', ButtonStyle.Secondary, '📜')
-          )],
-        });
+      if (interaction.commandName === 'recrutamento') {
+        if (!admin(interaction)) {
+          return interaction.reply({
+            content: '❌ Você precisa ser administrador para publicar este painel.',
+            ephemeral: true
+          });
+        }
+
+        const reviewChannel = await getReviewChannel(interaction.guild);
+
+        return publishPanel(
+          interaction,
+          createRecruitmentPanel(reviewChannel.id),
+          [createRecruitmentButtons()]
+        );
       }
 
-      if (i.commandName === 'bau') {
-        return i.reply({
-          embeds: [embed(
-            '📦 CONTROLE DO BAÚ',
-            'Registre as entradas e retiradas e consulte o histórico das últimas movimentações.',
-            'bau'
-          )],
-          components: [row(
-            btn('chestadd', 'Registrar movimentação', ButtonStyle.Danger, '📦'),
-            btn('chesthistory', 'Ver histórico', ButtonStyle.Secondary, '📜')
-          )],
-        });
+      if (interaction.commandName === 'farme') {
+        if (!admin(interaction)) {
+          return interaction.reply({
+            content: '❌ Você precisa ser administrador.',
+            ephemeral: true
+          });
+        }
+
+        return publishPanel(
+          interaction,
+          createFarmPanel(),
+          [createFarmButtons()]
+        );
       }
 
-      if (i.commandName === 'configuracao') {
-        return i.reply({
-          ephemeral: true,
-          embeds: [embed(
-            '⚙️ PERSONALIZAÇÃO DOS PAINÉIS',
-            'Escolha qual banner deseja alterar. Use um link HTTPS direto de imagem PNG, JPG, GIF ou WEBP.\n\n🔒 Ao usar /recrutamento, selecione o canal de texto que receberá todas as fichas. Dê ao bot as permissões Ver canal, Enviar mensagens, Inserir links e Ler histórico de mensagens; dê acesso à liderança nas permissões do canal.',
-            null,
-            DARK
-          )],
+      if (interaction.commandName === 'bau') {
+        if (!admin(interaction)) {
+          return interaction.reply({
+            content: '❌ Você precisa ser administrador.',
+            ephemeral: true
+          });
+        }
+
+        return publishPanel(
+          interaction,
+          createChestPanel(),
+          [createChestButtons()]
+        );
+      }
+
+      if (interaction.commandName === 'configuracao') {
+        if (!admin(interaction)) {
+          return interaction.reply({
+            content: '❌ Você precisa ser administrador.',
+            ephemeral: true
+          });
+        }
+
+        const panel = embed(
+          '⚙️ CONFIGURAÇÃO',
+          [
+            '**Banners:** configure a imagem dos painéis.',
+            '',
+            'Use os botões para escolher qual banner alterar.',
+            'O canal de recrutamento é fixo:',
+            `<#${REVIEW_CHANNEL_ID}>`
+          ].join('\n'),
+          'config'
+        );
+
+        return interaction.reply({
+          embeds: [panel],
           components: [
-            row(btn('banner_recrutamento', 'Recrutamento', ButtonStyle.Danger, '📝'), btn('banner_farme', 'Farm', ButtonStyle.Danger, '💰')),
-            row(btn('banner_bau', 'Baú', ButtonStyle.Danger, '📦'), btn('banner_registro', 'Registro', ButtonStyle.Secondary, '📜'))
+            row(
+              btn('banner_recruitment', 'Banner recrutamento'),
+              btn('banner_farm', 'Banner farm'),
+              btn('banner_chest', 'Banner baú')
+            )
           ],
+          ephemeral: true
         });
       }
     }
 
-    if (i.isButton()) {
-      const id = i.customId;
+    if (interaction.isButton()) {
+      const id = interaction.customId;
 
-      if (id.startsWith('banner_')) {
-        if (!admin(i)) return i.reply({ content: '🔒 Sem permissão.', ephemeral: true });
-        const key = id.slice(7);
-        return i.showModal(new ModalBuilder().setCustomId(`save_${key}`).setTitle('Alterar banner')
-          .addComponents(row(new TextInputBuilder().setCustomId('url').setLabel('Link HTTPS direto da imagem')
-            .setStyle(TextInputStyle.Short).setRequired(true))));
+      if (id === 'recruit_apply') {
+        return interaction.showModal(makeRecruitmentModal());
       }
 
-      if (id === 'apply') {
-        const prior = db.recruits.find(r => r.user === i.user.id && r.status === 'Pendente');
-        if (prior) {
-          return i.reply({ content: '🟡 Você já tem uma ficha em análise. Aguarde a decisão da liderança antes de enviar outra.', ephemeral: true });
+      if (id.startsWith('recruit_approve_')) {
+        if (!admin(interaction)) {
+          return interaction.reply({
+            content: '❌ Apenas a liderança pode avaliar fichas.',
+            ephemeral: true
+          });
         }
-        client.pendingForms.set(i.user.id, { startedAt: new Date().toLocaleString('pt-BR') });
-        return i.showModal(formModal(i.user.id));
-      }
 
-      if (id === 'farmadd') {
-        return i.showModal(new ModalBuilder().setCustomId('farm').setTitle('Registrar farm')
-          .addComponents(
-            row(new TextInputBuilder().setCustomId('amount').setLabel('Quantidade numérica').setStyle(TextInputStyle.Short).setRequired(true)),
-            row(new TextInputBuilder().setCustomId('notes').setLabel('Observação (opcional)').setStyle(TextInputStyle.Paragraph).setRequired(false))
-          ));
-      }
+        const recruitId = id.slice('recruit_approve_'.length);
+        const recruit = findRecruit(recruitId);
 
-      if (id === 'farmrecords') {
-        const records = db.farmRecords.slice(-15).reverse();
-        const desc = records.length
-          ? records.map((r, n) => `**${n + 1}. ${r.amount}** • <@${r.user}> • ${r.date}${r.notes ? `\n_${r.notes}_` : ''}`).join('\n\n')
-          : 'Ainda não há registros de farm.';
-        return i.reply({ ephemeral: true, embeds: [embed('📜 REGISTROS RECENTES DE FARM', desc, 'registro')] });
-      }
+        if (!recruit) {
+          return interaction.reply({
+            content: 'Ficha não encontrada.',
+            ephemeral: true
+          });
+        }
 
-      if (id === 'chestadd') {
-        return i.showModal(new ModalBuilder().setCustomId('chest').setTitle('Movimentação do baú')
-          .addComponents(
-            row(new TextInputBuilder().setCustomId('kind').setLabel('Tipo: entrada ou retirada').setStyle(TextInputStyle.Short).setRequired(true)),
-            row(new TextInputBuilder().setCustomId('item').setLabel('Item/material').setStyle(TextInputStyle.Short).setRequired(true)),
-            row(new TextInputBuilder().setCustomId('quantity').setLabel('Quantidade').setStyle(TextInputStyle.Short).setRequired(true)),
-            row(new TextInputBuilder().setCustomId('notes').setLabel('Observação (opcional)').setStyle(TextInputStyle.Paragraph).setRequired(false))
-          ));
-      }
-
-      if (id === 'chesthistory') {
-        const records = db.chest.slice(-10).reverse();
-        const desc = records.length
-          ? records.map(x => `**${x.kind === 'entrada' ? '📥 ENTRADA' : '📤 RETIRADA'}** • **${x.item} × ${x.quantity}**\n👤 <@${x.user}> · 🕒 ${x.date}`).join('\n\n')
-          : 'Nenhuma movimentação registrada.';
-        return i.reply({ ephemeral: true, embeds: [embed('📜 HISTÓRICO DO BAÚ', desc, 'bau')] });
-      }
-
-      if (id.startsWith('approve_') || id.startsWith('reject_')) {
-        if (!admin(i)) return i.reply({ content: '🔒 Apenas a administração pode avaliar fichas.', ephemeral: true });
-        const ok = id.startsWith('approve_');
-        const recruitId = id.slice(ok ? 8 : 7);
-        const recruit = db.recruits.find(x => x.id === recruitId);
-        if (!recruit) return i.reply({ content: 'Ficha não encontrada.', ephemeral: true });
-        if (recruit.status !== 'Pendente') return i.reply({ content: 'Esta ficha já foi avaliada.', ephemeral: true });
-
-        recruit.status = ok ? 'Aprovado' : 'Recusado';
-        recruit.reviewer = i.user.id;
-        recruit.reviewedAt = new Date().toLocaleString('pt-BR');
+        recruit.status = 'Aprovado';
+        recruit.reviewer = interaction.user.id;
+        recruit.reviewedAt = new Date().toISOString();
         save();
 
-        const finalEmbed = EmbedBuilder.from(i.message.embeds[0])
-          .addFields({ name: '📌 RESULTADO', value: `${ok ? '✅ APROVADO' : '❌ RECUSADO'} por ${i.user}\n**Data:** ${recruit.reviewedAt}` });
-        await i.update({ embeds: [finalEmbed], components: [] });
+        await interaction.update({
+          embeds: [
+            embed(
+              `✅ Ficha aprovada — ${recruit.username}`,
+              `Candidato: <@${recruit.userId}>\nResponsável: <@${interaction.user.id}>`,
+              'recruitment',
+              0x2ECC71
+            )
+          ],
+          components: []
+        });
 
-        const user = await client.users.fetch(recruit.user).catch(() => null);
-        if (user) {
-          const dm = ok
-            ? '✅ **Sua ficha para a Tropa do Rodo 2 foi APROVADA!**\nA próxima etapa é uma entrevista por call. Aguarde a liderança enviar as instruções e o horário.'
-            : '❌ **Sua ficha para a Tropa do Rodo 2 foi recusada.** Obrigado pelo interesse na Nova Rio RP.';
-          await user.send(dm).catch(() => {});
-        }
+        try {
+          const user = await client.users.fetch(recruit.userId);
+          await user.send(
+            '✅ Sua ficha para a Tropa do Rodo 2 foi aprovada! Procure a liderança da Nova Rio RP.'
+          );
+        } catch {}
+
         return;
       }
+
+      if (id.startsWith('recruit_reject_')) {
+        if (!admin(interaction)) {
+          return interaction.reply({
+            content: '❌ Apenas a liderança pode avaliar fichas.',
+            ephemeral: true
+          });
+        }
+
+        const recruitId = id.slice('recruit_reject_'.length);
+        const recruit = findRecruit(recruitId);
+
+        if (!recruit) {
+          return interaction.reply({
+            content: 'Ficha não encontrada.',
+            ephemeral: true
+          });
+        }
+
+        recruit.status = 'Recusado';
+        recruit.reviewer = interaction.user.id;
+        recruit.reviewedAt = new Date().toISOString();
+        save();
+
+        await interaction.update({
+          embeds: [
+            embed(
+              `❌ Ficha recusada — ${recruit.username}`,
+              `Candidato: <@${recruit.userId}>\nResponsável: <@${interaction.user.id}>`,
+              'recruitment',
+              0x7F1D1D
+            )
+          ],
+          components: []
+        });
+
+        try {
+          const user = await client.users.fetch(recruit.userId);
+          await user.send(
+            'Sua ficha para a Tropa do Rodo 2 não foi aprovada desta vez. Você pode conversar com a liderança para obter orientações.'
+          );
+        } catch {}
+
+        return;
+      }
+
+      if (id === 'farm_add') {
+        return interaction.showModal(makeFarmModal());
+      }
+
+      if (id === 'farm_view') {
+        const records = db.farmRecords.slice(-15).reverse();
+
+        return interaction.reply({
+          embeds: [
+            embed(
+              '📊 REGISTROS DE FARM',
+              records.length
+                ? records.map(r =>
+                    `• <@${r.userId}> — **${r.amount}** — <t:${Math.floor(new Date(r.createdAt).getTime() / 1000)}:R>`
+                  ).join('\n')
+                : 'Nenhum registro de farm disponível.',
+              'farm'
+            )
+          ],
+          ephemeral: true
+        });
+      }
+
+      if (id === 'chest_in' || id === 'chest_out') {
+        return interaction.showModal(
+          makeChestModal(id === 'chest_in' ? 'in' : 'out')
+        );
+      }
+
+      if (id === 'chest_view') {
+        const records = db.chest.slice(-15).reverse();
+
+        return interaction.reply({
+          embeds: [
+            embed(
+              '📦 MOVIMENTAÇÕES DO BAÚ',
+              records.length
+                ? records.map(r =>
+                    `• **${r.direction === 'in' ? 'Entrada' : 'Saída'}:** ${r.item}\nPor: <@${r.userId}>\nMotivo: ${r.reason}`
+                  ).join('\n\n')
+                : 'Nenhuma movimentação registrada.',
+              'chest'
+            )
+          ],
+          ephemeral: true
+        });
+      }
+
+      if (id.startsWith('banner_')) {
+        if (!admin(interaction)) {
+          return interaction.reply({
+            content: '❌ Apenas administradores podem configurar banners.',
+            ephemeral: true
+          });
+        }
+
+        const key = id.slice('banner_'.length);
+        const modal = new ModalBuilder()
+          .setCustomId(`banner_modal_${key}`)
+          .setTitle('Configurar banner');
+
+        modal.addComponents(
+          new ActionRowBuilder().addComponents(
+            new TextInputBuilder()
+              .setCustomId('banner_url')
+              .setLabel('URL da imagem')
+              .setPlaceholder('https://exemplo.com/imagem.png')
+              .setStyle(TextInputStyle.Short)
+              .setRequired(true)
+              .setMaxLength(500)
+          )
+        );
+
+        return interaction.showModal(modal);
+      }
     }
 
-    if (i.isModalSubmit()) {
-      const id = i.customId;
+    if (interaction.isModalSubmit()) {
+      const id = interaction.customId;
 
-      if (id.startsWith('form_')) {
-        const userId = id.slice('form_'.length);
-        if (i.user.id !== userId) return i.reply({ content: 'Esta ficha pertence a outra pessoa.', ephemeral: true });
-
-        const prior = db.recruits.find(r => r.user === i.user.id && r.status === 'Pendente');
-        if (prior) {
-          client.pendingForms.delete(userId);
-          return i.reply({ content: '🟡 Você já tem uma ficha em análise. Aguarde a decisão da liderança.', ephemeral: true });
-        }
-
-        const draft = client.pendingForms.get(userId);
-        if (!draft) return i.reply({ content: 'Sua ficha expirou. Clique em Iniciar ficha de inscrição para começar novamente.', ephemeral: true });
-
-        const groupedAnswers = [0, 1, 2, 3, 4].map(n => i.fields.getTextInputValue(`group${n}`).trim());
+      if (id === 'recruitment_form') {
         const answers = [];
-        for (let groupIndex = 0; groupIndex < groupedAnswers.length; groupIndex++) {
-          const text = groupedAnswers[groupIndex];
-          const expectedStart = groupIndex * 6;
-          const lines = text.split(/\n+/).map(line => line.trim()).filter(Boolean);
-          // Keep the candidate's original numbered responses together in a readable answer.
-          for (let j = 0; j < 6; j++) {
-            const qIndex = expectedStart + j;
-            const matching = lines.find(line => new RegExp(`^\\s*${qIndex + 1}[.)\\-:]\\s*`).test(line));
-            answers[qIndex] = (matching || (j === 0 ? text : 'Resposta incluída no bloco acima')).slice(0, 1000);
-          }
+
+        for (let i = 0; i < 5; i++) {
+          answers[i] = interaction.fields.getTextInputValue(`answer_${i}`);
         }
+
+        client.pendingForms.set(interaction.user.id, {
+          answers,
+          next: 5,
+          guildId: interaction.guildId
+        });
+
+        return interaction.showModal(makeExtraQuestionModal(5));
+      }
+
+      if (id.startsWith('recruitment_extra_')) {
+        const startIndex = Number(id.slice('recruitment_extra_'.length));
+        const pending = client.pendingForms.get(interaction.user.id);
+
+        if (!pending || pending.guildId !== interaction.guildId) {
+          return interaction.reply({
+            content: 'Sua ficha expirou. Comece novamente pelo painel de recrutamento.',
+            ephemeral: true
+          });
+        }
+
+        for (
+          let i = startIndex;
+          i < Math.min(startIndex + 5, questions.length);
+          i++
+        ) {
+          pending.answers[i] =
+            interaction.fields.getTextInputValue(`answer_${i}`);
+        }
+
+        const next = startIndex + 5;
+
+        if (next < questions.length) {
+          pending.next = next;
+          return interaction.showModal(makeExtraQuestionModal(next));
+        }
+
+        client.pendingForms.delete(interaction.user.id);
+
+        const guild = await client.guilds.fetch(pending.guildId);
+        const reviewChannel = await getReviewChannel(guild);
 
         const recruit = {
-          id: `${Date.now()}-${userId}`,
-          user: userId,
-          answers,
-          groupedAnswers,
+          id: createRecruitId(),
+          userId: interaction.user.id,
+          username: interaction.user.username,
+          answers: pending.answers,
           status: 'Pendente',
-          createdAt: new Date().toLocaleString('pt-BR'),
+          createdAt: new Date().toISOString()
         };
 
-        let reviewChannel;
-        let reviewMessage;
-        try {
-          const guild = await client.guilds.fetch(G);
-          if (!db.reviewChannelId) throw new Error('Nenhum canal de logs configurado. Um administrador deve executar /recrutamento e escolher canal_log.');
-          reviewChannel = await getReviewChannel(guild, db.reviewChannelId);
-          const [e1, e2] = formatAnswerEmbeds(recruit);
-          reviewMessage = await reviewChannel.send({
-            content: `📥 Nova ficha para análise — candidato: <@${recruit.user}>`,
-            embeds: [e1, e2],
-            components: [reviewButtons(recruit.id)],
-          });
-        } catch (sendError) {
-          console.error('[RECRUTAMENTO] Não foi possível enviar a ficha ao canal de logs.', {
-            message: sendError?.message,
-            code: sendError?.code,
-            channelId: reviewChannel?.id || db.reviewChannelId,
-            userId,
-          });
-          return i.reply({
-            content: '❌ Não consegui enviar sua ficha ao canal de logs. Sua inscrição não foi confirmada. Avise um administrador para verificar o canal selecionado e as permissões do bot.',
-            ephemeral: true,
-          });
-        }
-
-        recruit.reviewMessageId = reviewMessage.id;
-        recruit.reviewChannelId = reviewChannel.id;
         db.recruits.push(recruit);
         save();
-        client.pendingForms.delete(userId);
 
-        return i.reply({
-          embeds: [embed(
-            '✅ FICHA ENVIADA COM SUCESSO',
-            'Sua ficha foi enviada à liderança e está **EM ANÁLISE**. Aguarde o resultado.\n\nSe sua ficha for recusada, você poderá preencher uma nova ficha pelo painel.',
-            null,
-            0x2D8A55
-          )],
-          ephemeral: true,
+        const [recruitEmbed] = formatAnswerEmbeds(recruit);
+
+        await reviewChannel.send({
+          embeds: [recruitEmbed],
+          components: [createReviewButtons(recruit.id)]
+        });
+
+        return interaction.reply({
+          content: '✅ Sua ficha foi enviada para a liderança da Tropa do Rodo 2!',
+          ephemeral: true
         });
       }
 
-      if (id.startsWith('save_')) {
-        if (!admin(i)) return i.reply({ content: '🔒 Sem permissão.', ephemeral: true });
-        const key = id.slice(5), url = i.fields.getTextInputValue('url').trim();
-        if (!/^https:\/\/\S+\.(png|jpe?g|gif|webp)(\?.*)?$/i.test(url)) {
-          return i.reply({ content: 'Use link HTTPS direto de uma imagem PNG, JPG, GIF ou WEBP.', ephemeral: true });
+      if (id === 'farm_modal') {
+        const amount = interaction.fields.getTextInputValue('farm_amount').trim();
+
+        if (!amount) {
+          return interaction.reply({
+            content: 'Informe um valor válido.',
+            ephemeral: true
+          });
         }
-        if (!Object.prototype.hasOwnProperty.call(db.banners, key) &&
-            !['recrutamento', 'farme', 'bau', 'registro'].includes(key)) {
-          return i.reply({ content: 'Tipo de banner inválido.', ephemeral: true });
+
+        db.farmRecords.push({
+          userId: interaction.user.id,
+          amount,
+          createdAt: new Date().toISOString()
+        });
+
+        save();
+
+        return interaction.reply({
+          content: '✅ Registro de farm salvo!',
+          ephemeral: true
+        });
+      }
+
+      if (id.startsWith('chest_modal_')) {
+        const direction = id.slice('chest_modal_'.length);
+        const item = interaction.fields.getTextInputValue('chest_item');
+        const reason = interaction.fields.getTextInputValue('chest_reason');
+
+        db.chest.push({
+          userId: interaction.user.id,
+          direction,
+          item,
+          reason,
+          createdAt: new Date().toISOString()
+        });
+
+        save();
+
+        return interaction.reply({
+          content: '✅ Movimentação do baú registrada!',
+          ephemeral: true
+        });
+      }
+
+      if (id.startsWith('banner_modal_')) {
+        if (!admin(interaction)) {
+          return interaction.reply({
+            content: '❌ Apenas administradores podem configurar banners.',
+            ephemeral: true
+          });
         }
+
+        const key = id.slice('banner_modal_'.length);
+        const url = interaction.fields.getTextInputValue('banner_url').trim();
+
+        if (!/^https?:\/\/\S+\.(png|jpe?g|gif|webp)(\?\S*)?$/i.test(url)) {
+          return interaction.reply({
+            content: 'Informe uma URL direta de imagem PNG, JPG, GIF ou WEBP.',
+            ephemeral: true
+          });
+        }
+
         db.banners[key] = url;
         save();
-        return i.reply({ content: `✅ Banner de **${key}** atualizado. Publique novamente o painel para visualizar.`, ephemeral: true });
-      }
 
-      if (id === 'farm') {
-        const amount = Number(i.fields.getTextInputValue('amount'));
-        if (!Number.isFinite(amount) || amount <= 0) {
-          return i.reply({ content: 'Informe uma quantidade maior que zero.', ephemeral: true });
-        }
-        const notes = i.fields.getTextInputValue('notes') || '';
-        db.farm[i.user.id] = (db.farm[i.user.id] || 0) + amount;
-        db.farmRecords.push({ user: i.user.id, amount, notes, date: new Date().toLocaleString('pt-BR') });
-        save();
-        return i.reply({
-          embeds: [embed('✅ FARM REGISTRADO', `**Quantidade adicionada:** ${amount}\n**Total acumulado:** ${db.farm[i.user.id]}`, 'farme', 0x2D8A55)],
-          ephemeral: true,
-        });
-      }
-
-      if (id === 'chest') {
-        const kind = i.fields.getTextInputValue('kind').trim().toLowerCase();
-        if (!['entrada', 'retirada'].includes(kind)) {
-          return i.reply({ content: 'Escreva exatamente **entrada** ou **retirada** no campo Tipo.', ephemeral: true });
-        }
-        const record = {
-          kind,
-          item: i.fields.getTextInputValue('item'),
-          quantity: i.fields.getTextInputValue('quantity'),
-          notes: i.fields.getTextInputValue('notes') || '',
-          user: i.user.id,
-          date: new Date().toLocaleString('pt-BR'),
-        };
-        db.chest.push(record);
-        save();
-        return i.reply({
-          embeds: [embed(
-            '✅ MOVIMENTAÇÃO REGISTRADA',
-            `**Tipo:** ${kind === 'entrada' ? '📥 Entrada' : '📤 Retirada'}\n**Item:** ${record.item}\n**Quantidade:** ${record.quantity}\n**Responsável:** <@${i.user.id}>`,
-            'bau',
-            0x2D8A55
-          )],
-          ephemeral: true,
+        return interaction.reply({
+          content: '✅ Banner atualizado!',
+          ephemeral: true
         });
       }
     }
   } catch (error) {
-    await replyError(i, error, `interaction:${i.customId || i.commandName || 'unknown'}`);
+    console.error('Erro ao processar interação:', error);
+
+    const message =
+      '❌ Ocorreu um erro ao processar. Confira os logs do bot e as permissões do canal.';
+
+    if (interaction.deferred || interaction.replied) {
+      return interaction.followUp({
+        content: message,
+        ephemeral: true
+      }).catch(() => {});
+    }
+
+    return interaction.reply({
+      content: message,
+      ephemeral: true
+    }).catch(() => {});
   }
 });
 
-async function start() {
-  const rest = new REST({ version: '10' }).setToken(T);
-  await rest.put(Routes.applicationGuildCommands(C, G), { body: commands });
-  console.log('Comandos registrados no servidor.');
-  await client.login(T);
-}
-
-start().catch(error => {
-  console.error('Erro ao iniciar o bot:', error);
-  process.exit(1);
-});
+client.login(T);
