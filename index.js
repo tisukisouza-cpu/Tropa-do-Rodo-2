@@ -1,13 +1,30 @@
+
 const {
-  Client, GatewayIntentBits, REST, Routes, SlashCommandBuilder,
-  ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder, ModalBuilder,
-  TextInputBuilder, TextInputStyle, PermissionFlagsBits, ChannelType
+  Client,
+  GatewayIntentBits,
+  REST,
+  Routes,
+  SlashCommandBuilder,
+  ActionRowBuilder,
+  ButtonBuilder,
+  ButtonStyle,
+  EmbedBuilder,
+  ModalBuilder,
+  TextInputBuilder,
+  TextInputStyle,
+  PermissionFlagsBits,
+  ChannelType
 } = require('discord.js');
 
 const fs = require('node:fs');
 const path = require('node:path');
 
-const { DISCORD_TOKEN: T, CLIENT_ID: C, GUILD_ID: G } = process.env;
+const {
+  DISCORD_TOKEN: T,
+  CLIENT_ID: C,
+  GUILD_ID: G
+} = process.env;
+
 const REVIEW_CHANNEL_ID = '1563709838142349342';
 
 if (!T || !C || !G) {
@@ -29,13 +46,21 @@ const fresh = () => ({
 function load() {
   try {
     const old = JSON.parse(fs.readFileSync(file, 'utf8'));
+
     return {
       ...fresh(),
       ...old,
-      banners: { ...fresh().banners, ...(old.banners || {}) },
+      banners: {
+        ...fresh().banners,
+        ...(old.banners || {})
+      },
       recruits: Array.isArray(old.recruits) ? old.recruits : [],
-      farm: old.farm && typeof old.farm === 'object' ? old.farm : {},
-      farmRecords: Array.isArray(old.farmRecords) ? old.farmRecords : [],
+      farm: old.farm && typeof old.farm === 'object'
+        ? old.farm
+        : {},
+      farmRecords: Array.isArray(old.farmRecords)
+        ? old.farmRecords
+        : [],
       chest: Array.isArray(old.chest) ? old.chest : []
     };
   } catch {
@@ -44,8 +69,10 @@ function load() {
 }
 
 let db = load();
-const save = () =>
+
+function save() {
   fs.writeFileSync(file, JSON.stringify(db, null, 2));
+}
 
 const commands = [
   new SlashCommandBuilder()
@@ -63,7 +90,7 @@ const commands = [
   new SlashCommandBuilder()
     .setName('configuracao')
     .setDescription('Personaliza banners e configurações')
-].map(x => x.toJSON());
+].map(command => command.toJSON());
 
 const client = new Client({
   intents: [GatewayIntentBits.Guilds]
@@ -71,9 +98,13 @@ const client = new Client({
 
 client.pendingForms = new Map();
 
-const admin = i => Boolean(
-  i.memberPermissions?.has(PermissionFlagsBits.Administrator) ||
-  i.memberPermissions?.has(PermissionFlagsBits.ManageGuild)
+const admin = interaction => Boolean(
+  interaction.memberPermissions?.has(
+    PermissionFlagsBits.Administrator
+  ) ||
+  interaction.memberPermissions?.has(
+    PermissionFlagsBits.ManageGuild
+  )
 );
 
 const RED = 0xC1121F;
@@ -111,23 +142,31 @@ const questions = [
   ['30. Mensagem à liderança: por que merece oportunidade?', 'Por que merece uma oportunidade?']
 ];
 
-const btn = (id, label, style = ButtonStyle.Danger, emoji) => {
-  const b = new ButtonBuilder()
+const btn = (
+  id,
+  label,
+  style = ButtonStyle.Danger,
+  emoji
+) => {
+  const button = new ButtonBuilder()
     .setCustomId(id)
     .setLabel(label)
     .setStyle(style);
 
-  if (emoji) b.setEmoji(emoji);
-  return b;
+  if (emoji) button.setEmoji(emoji);
+
+  return button;
 };
 
 const row = (...items) =>
   new ActionRowBuilder().addComponents(...items);
 
 function embed(title, description, key, color = RED) {
-  const e = new EmbedBuilder()
+  const result = new EmbedBuilder()
     .setColor(color)
-    .setAuthor({ name: '👑 TROPA DO RODO 2 • NOVA RIO RP' })
+    .setAuthor({
+      name: '👑 TROPA DO RODO 2 • NOVA RIO RP'
+    })
     .setTitle(title)
     .setDescription(description)
     .setFooter({
@@ -135,9 +174,13 @@ function embed(title, description, key, color = RED) {
     })
     .setTimestamp();
 
-  if (key && db.banners[key]) e.setImage(db.banners[key]);
-  return e;
+  if (key && db.banners[key]) {
+    result.setImage(db.banners[key]);
   }
+
+  return result;
+}
+
 async function getReviewChannel(guild) {
   const channel = await guild.channels.fetch(REVIEW_CHANNEL_ID);
 
@@ -211,7 +254,12 @@ function createChestPanel() {
 
 function createRecruitmentButtons() {
   return row(
-    btn('recruit_apply', 'Preencher ficha', ButtonStyle.Success, '📝')
+    btn(
+      'recruit_apply',
+      'Preencher ficha',
+      ButtonStyle.Success,
+      '📝'
+    )
   );
 }
 
@@ -232,8 +280,18 @@ function createChestButtons() {
 
 function createReviewButtons(recruitId) {
   return row(
-    btn(`recruit_approve_${recruitId}`, 'Aprovar', ButtonStyle.Success, '✅'),
-    btn(`recruit_reject_${recruitId}`, 'Recusar', ButtonStyle.Danger, '❌')
+    btn(
+      `recruit_approve_${recruitId}`,
+      'Aprovar',
+      ButtonStyle.Success,
+      '✅'
+    ),
+    btn(
+      `recruit_reject_${recruitId}`,
+      'Recusar',
+      ButtonStyle.Danger,
+      '❌'
+    )
   );
 }
 
@@ -262,11 +320,15 @@ function makeRecruitmentModal() {
 }
 
 function makeExtraQuestionModal(startIndex) {
+  const endIndex = Math.min(startIndex + 5, questions.length);
+
   const modal = new ModalBuilder()
     .setCustomId(`recruitment_extra_${startIndex}`)
-    .setTitle(`Ficha • Perguntas ${startIndex + 1}–${Math.min(startIndex + 5, questions.length)}`);
+    .setTitle(
+      `Ficha • Perguntas ${startIndex + 1}–${endIndex}`
+    );
 
-  for (let i = startIndex; i < Math.min(startIndex + 5, questions.length); i++) {
+  for (let i = startIndex; i < endIndex; i++) {
     const [label, placeholder] = questions[i];
 
     modal.addComponents(
@@ -308,7 +370,9 @@ function makeFarmModal() {
 function makeChestModal(direction) {
   const modal = new ModalBuilder()
     .setCustomId(`chest_modal_${direction}`)
-    .setTitle(direction === 'in' ? 'Entrada no baú' : 'Saída do baú');
+    .setTitle(
+      direction === 'in' ? 'Entrada no baú' : 'Saída do baú'
+    );
 
   modal.addComponents(
     new ActionRowBuilder().addComponents(
@@ -334,27 +398,51 @@ function makeChestModal(direction) {
   return modal;
 }
 
+// Cada embed recebe no máximo três perguntas.
+// Assim, a ficha inteira não ultrapassa o limite
+// de descrição de uma única embed.
 function formatAnswerEmbeds(recruit) {
-  const e = embed(
-    `📋 Ficha de ${recruit.username}`,
-    [
-      `**Candidato:** <@${recruit.userId}>`,
-      `**ID da ficha:** \`${recruit.id}\``,
-      `**Status:** ${recruit.status}`,
-      '',
-      ...recruit.answers.map(
-        (answer, index) =>
-          `**${questions[index][0]}**\n${answer || 'Não informado'}`
-      )
-    ].join('\n\n'),
-    'recruitment'
-  );
+  const embeds = [];
 
-  return [e];
+  for (
+    let start = 0;
+    start < recruit.answers.length;
+    start += 3
+  ) {
+    const end = Math.min(start + 3, recruit.answers.length);
+
+    const description = recruit.answers
+      .slice(start, end)
+      .map((answer, offset) => {
+        const index = start + offset;
+        const question = questions[index][0];
+        const response = answer || 'Não informado';
+
+        return `**${question}**\n${response}`;
+      })
+      .join('\n\n');
+
+    const header = start === 0
+      ? `**Candidato:** <@${recruit.userId}>\n` +
+        `**ID da ficha:** \`${recruit.id}\`\n` +
+        `**Status:** ${recruit.status}\n\n`
+      : `**Candidato:** <@${recruit.userId}>\n` +
+        `**Ficha:** \`${recruit.id}\`\n\n`;
+
+    embeds.push(
+      embed(
+        `📋 Ficha de ${recruit.username} — ${start + 1} a ${end}`,
+        header + description,
+        'recruitment'
+      )
+    );
+  }
+
+  return embeds;
 }
 
 function findRecruit(id) {
-  return db.recruits.find(r => r.id === id);
+  return db.recruits.find(recruit => recruit.id === id);
 }
 
 function createRecruitId() {
@@ -395,8 +483,12 @@ client.once('ready', async () => {
     console.error('Erro ao registrar comandos:', error);
   }
 });
+
 client.on('interactionCreate', async interaction => {
   try {
+    // =========================
+    // COMANDOS SLASH
+    // =========================
     if (interaction.isChatInputCommand()) {
       if (!interaction.inGuild()) {
         return interaction.reply({
@@ -413,7 +505,9 @@ client.on('interactionCreate', async interaction => {
           });
         }
 
-        const reviewChannel = await getReviewChannel(interaction.guild);
+        const reviewChannel = await getReviewChannel(
+          interaction.guild
+        );
 
         return publishPanel(
           interaction,
@@ -486,13 +580,48 @@ client.on('interactionCreate', async interaction => {
       }
     }
 
+    // =========================
+    // BOTÕES
+    // =========================
     if (interaction.isButton()) {
       const id = interaction.customId;
 
-      if (id === 'recruit_apply') {
-        return interaction.showModal(makeRecruitmentModal());
+      // Continuar formulário: o modal só é aberto
+      // em resposta a um clique de botão.
+      if (id.startsWith('recruitment_continue_')) {
+        const startIndex = Number(
+          id.slice('recruitment_continue_'.length)
+        );
+
+        const pending = client.pendingForms.get(
+          interaction.user.id
+        );
+
+        if (
+          !pending ||
+          pending.guildId !== interaction.guildId ||
+          pending.next !== startIndex
+        ) {
+          return interaction.reply({
+            content: 'Sua ficha expirou ou essa etapa já foi respondida. Comece novamente pelo painel.',
+            ephemeral: true
+          });
+        }
+
+        return interaction.showModal(
+          makeExtraQuestionModal(startIndex)
+        );
       }
 
+      if (id === 'recruit_apply') {
+        client.pendingForms.delete(interaction.user.id);
+
+        return interaction.showModal(
+          makeRecruitmentModal()
+        );
+      }
+
+      // Aprovar ficha
       if (id.startsWith('recruit_approve_')) {
         if (!admin(interaction)) {
           return interaction.reply({
@@ -501,12 +630,22 @@ client.on('interactionCreate', async interaction => {
           });
         }
 
-        const recruitId = id.slice('recruit_approve_'.length);
+        const recruitId = id.slice(
+          'recruit_approve_'.length
+        );
+
         const recruit = findRecruit(recruitId);
 
         if (!recruit) {
           return interaction.reply({
             content: 'Ficha não encontrada.',
+            ephemeral: true
+          });
+        }
+
+        if (recruit.status !== 'Pendente') {
+          return interaction.reply({
+            content: `Esta ficha já foi avaliada: ${recruit.status}.`,
             ephemeral: true
           });
         }
@@ -530,6 +669,7 @@ client.on('interactionCreate', async interaction => {
 
         try {
           const user = await client.users.fetch(recruit.userId);
+
           await user.send(
             '✅ Sua ficha para a Tropa do Rodo 2 foi aprovada! Procure a liderança da Nova Rio RP.'
           );
@@ -538,6 +678,7 @@ client.on('interactionCreate', async interaction => {
         return;
       }
 
+      // Recusar ficha
       if (id.startsWith('recruit_reject_')) {
         if (!admin(interaction)) {
           return interaction.reply({
@@ -546,12 +687,22 @@ client.on('interactionCreate', async interaction => {
           });
         }
 
-        const recruitId = id.slice('recruit_reject_'.length);
+        const recruitId = id.slice(
+          'recruit_reject_'.length
+        );
+
         const recruit = findRecruit(recruitId);
 
         if (!recruit) {
           return interaction.reply({
             content: 'Ficha não encontrada.',
+            ephemeral: true
+          });
+        }
+
+        if (recruit.status !== 'Pendente') {
+          return interaction.reply({
+            content: `Esta ficha já foi avaliada: ${recruit.status}.`,
             ephemeral: true
           });
         }
@@ -575,6 +726,7 @@ client.on('interactionCreate', async interaction => {
 
         try {
           const user = await client.users.fetch(recruit.userId);
+
           await user.send(
             'Sua ficha para a Tropa do Rodo 2 não foi aprovada desta vez. Você pode conversar com a liderança para obter orientações.'
           );
@@ -583,6 +735,7 @@ client.on('interactionCreate', async interaction => {
         return;
       }
 
+      // Farm
       if (id === 'farm_add') {
         return interaction.showModal(makeFarmModal());
       }
@@ -595,8 +748,8 @@ client.on('interactionCreate', async interaction => {
             embed(
               '📊 REGISTROS DE FARM',
               records.length
-                ? records.map(r =>
-                    `• <@${r.userId}> — **${r.amount}** — <t:${Math.floor(new Date(r.createdAt).getTime() / 1000)}:R>`
+                ? records.map(record =>
+                    `• <@${record.userId}> — **${record.amount}** — <t:${Math.floor(new Date(record.createdAt).getTime() / 1000)}:R>`
                   ).join('\n')
                 : 'Nenhum registro de farm disponível.',
               'farm'
@@ -606,6 +759,7 @@ client.on('interactionCreate', async interaction => {
         });
       }
 
+      // Baú
       if (id === 'chest_in' || id === 'chest_out') {
         return interaction.showModal(
           makeChestModal(id === 'chest_in' ? 'in' : 'out')
@@ -620,8 +774,8 @@ client.on('interactionCreate', async interaction => {
             embed(
               '📦 MOVIMENTAÇÕES DO BAÚ',
               records.length
-                ? records.map(r =>
-                    `• **${r.direction === 'in' ? 'Entrada' : 'Saída'}:** ${r.item}\nPor: <@${r.userId}>\nMotivo: ${r.reason}`
+                ? records.map(record =>
+                    `• **${record.direction === 'in' ? 'Entrada' : 'Saída'}:** ${record.item}\nPor: <@${record.userId}>\nMotivo: ${record.reason}`
                   ).join('\n\n')
                 : 'Nenhuma movimentação registrada.',
               'chest'
@@ -631,6 +785,7 @@ client.on('interactionCreate', async interaction => {
         });
       }
 
+      // Configuração de banners
       if (id.startsWith('banner_')) {
         if (!admin(interaction)) {
           return interaction.reply({
@@ -640,6 +795,7 @@ client.on('interactionCreate', async interaction => {
         }
 
         const key = id.slice('banner_'.length);
+
         const modal = new ModalBuilder()
           .setCustomId(`banner_modal_${key}`)
           .setTitle('Configurar banner');
@@ -660,14 +816,19 @@ client.on('interactionCreate', async interaction => {
       }
     }
 
+    // =========================
+    // ENVIO DOS FORMULÁRIOS
+    // =========================
     if (interaction.isModalSubmit()) {
       const id = interaction.customId;
 
+      // Primeiras cinco perguntas
       if (id === 'recruitment_form') {
         const answers = [];
 
         for (let i = 0; i < 5; i++) {
-          answers[i] = interaction.fields.getTextInputValue(`answer_${i}`);
+          answers[i] =
+            interaction.fields.getTextInputValue(`answer_${i}`);
         }
 
         client.pendingForms.set(interaction.user.id, {
@@ -676,16 +837,39 @@ client.on('interactionCreate', async interaction => {
           guildId: interaction.guildId
         });
 
-        return interaction.showModal(makeExtraQuestionModal(5));
+        return interaction.reply({
+          content: '✅ Primeira etapa concluída! Clique abaixo para continuar sua ficha.',
+          components: [
+            row(
+              btn(
+                'recruitment_continue_5',
+                'Continuar ficha',
+                ButtonStyle.Success,
+                '➡️'
+              )
+            )
+          ],
+          ephemeral: true
+        });
       }
 
+      // Perguntas 6 a 30
       if (id.startsWith('recruitment_extra_')) {
-        const startIndex = Number(id.slice('recruitment_extra_'.length));
-        const pending = client.pendingForms.get(interaction.user.id);
+        const startIndex = Number(
+          id.slice('recruitment_extra_'.length)
+        );
 
-        if (!pending || pending.guildId !== interaction.guildId) {
+        const pending = client.pendingForms.get(
+          interaction.user.id
+        );
+
+        if (
+          !pending ||
+          pending.guildId !== interaction.guildId ||
+          pending.next !== startIndex
+        ) {
           return interaction.reply({
-            content: 'Sua ficha expirou. Comece novamente pelo painel de recrutamento.',
+            content: 'Sua ficha expirou ou esta etapa não corresponde à atual. Comece novamente pelo painel de recrutamento.',
             ephemeral: true
           });
         }
@@ -703,12 +887,29 @@ client.on('interactionCreate', async interaction => {
 
         if (next < questions.length) {
           pending.next = next;
-          return interaction.showModal(makeExtraQuestionModal(next));
+
+          return interaction.reply({
+            content: `✅ Etapa concluída! Clique para responder às perguntas ${next + 1} a ${Math.min(next + 5, questions.length)}.`,
+            components: [
+              row(
+                btn(
+                  `recruitment_continue_${next}`,
+                  'Continuar ficha',
+                  ButtonStyle.Success,
+                  '➡️'
+                )
+              )
+            ],
+            ephemeral: true
+          });
         }
 
         client.pendingForms.delete(interaction.user.id);
 
-        const guild = await client.guilds.fetch(pending.guildId);
+        const guild = await client.guilds.fetch(
+          pending.guildId
+        );
+
         const reviewChannel = await getReviewChannel(guild);
 
         const recruit = {
@@ -723,12 +924,22 @@ client.on('interactionCreate', async interaction => {
         db.recruits.push(recruit);
         save();
 
-        const [recruitEmbed] = formatAnswerEmbeds(recruit);
+        const recruitEmbeds = formatAnswerEmbeds(recruit);
 
-        await reviewChannel.send({
-          embeds: [recruitEmbed],
-          components: [createReviewButtons(recruit.id)]
-        });
+        // Envia até três embeds por mensagem.
+        // Os botões ficam na primeira mensagem da ficha.
+        for (
+          let i = 0;
+          i < recruitEmbeds.length;
+          i += 3
+        ) {
+          await reviewChannel.send({
+            embeds: recruitEmbeds.slice(i, i + 3),
+            components: i === 0
+              ? [createReviewButtons(recruit.id)]
+              : []
+          });
+        }
 
         return interaction.reply({
           content: '✅ Sua ficha foi enviada para a liderança da Tropa do Rodo 2!',
@@ -736,8 +947,11 @@ client.on('interactionCreate', async interaction => {
         });
       }
 
+      // Registro de farm
       if (id === 'farm_modal') {
-        const amount = interaction.fields.getTextInputValue('farm_amount').trim();
+        const amount = interaction.fields
+          .getTextInputValue('farm_amount')
+          .trim();
 
         if (!amount) {
           return interaction.reply({
@@ -760,10 +974,15 @@ client.on('interactionCreate', async interaction => {
         });
       }
 
+      // Movimentação do baú
       if (id.startsWith('chest_modal_')) {
         const direction = id.slice('chest_modal_'.length);
-        const item = interaction.fields.getTextInputValue('chest_item');
-        const reason = interaction.fields.getTextInputValue('chest_reason');
+
+        const item = interaction.fields
+          .getTextInputValue('chest_item');
+
+        const reason = interaction.fields
+          .getTextInputValue('chest_reason');
 
         db.chest.push({
           userId: interaction.user.id,
@@ -781,6 +1000,7 @@ client.on('interactionCreate', async interaction => {
         });
       }
 
+      // Salvar banner
       if (id.startsWith('banner_modal_')) {
         if (!admin(interaction)) {
           return interaction.reply({
@@ -790,9 +1010,14 @@ client.on('interactionCreate', async interaction => {
         }
 
         const key = id.slice('banner_modal_'.length);
-        const url = interaction.fields.getTextInputValue('banner_url').trim();
 
-        if (!/^https?:\/\/\S+\.(png|jpe?g|gif|webp)(\?\S*)?$/i.test(url)) {
+        const url = interaction.fields
+          .getTextInputValue('banner_url')
+          .trim();
+
+        if (
+          !/^https?:\/\/\S+\.(png|jpe?g|gif|webp)(\?\S*)?$/i.test(url)
+        ) {
           return interaction.reply({
             content: 'Informe uma URL direta de imagem PNG, JPG, GIF ou WEBP.',
             ephemeral: true
